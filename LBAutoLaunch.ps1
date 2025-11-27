@@ -9,12 +9,12 @@ $idleThresholdSeconds = 180
 # Add or remove processes as needed
 $procsToKill = @(
     "LaunchBox",
-    "BigBox"
+    "BigBox",
     # Browsers (save a lot of RAM)
     # "chrome",           # Google Chrome
     # "msedge",           # Microsoft Edge
     # "firefox",          # Mozilla Firefox
-    "brave",            # Brave Browser
+    "brave"            # Brave Browser
     
     # Communication apps
     # "Discord",          # Discord
