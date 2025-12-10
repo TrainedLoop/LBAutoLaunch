@@ -9,7 +9,7 @@ $idleThresholdSeconds = 180
 # Add or remove processes as needed
 $procsToKill = @(
     "LaunchBox",
-    "BigBox",
+    "BigBox"
     # Browsers (save a lot of RAM)
     # "chrome",           # Google Chrome
     # "msedge",           # Microsoft Edge
@@ -114,6 +114,24 @@ public static class IdleHelper {
     [DllImport("user32.dll")]
     public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, int dwExtraInfo);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const uint MOUSEEVENTF_MOVE = 0x0001;
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_KEYUP = 0x0101;
+    public const byte VK_ESCAPE = 0x1B;
+
     public static uint GetIdleTimeSeconds() {
         LASTINPUTINFO lii = new LASTINPUTINFO();
         lii.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
@@ -124,6 +142,25 @@ public static class IdleHelper {
         uint tickNow = (uint)Environment.TickCount;
         uint idleTicks = tickNow - lii.dwTime;
         return idleTicks / 1000;
+    }
+
+    public static void ForceExitScreenSaver() {
+        // Method 1: Simulate mouse movement
+        mouse_event(MOUSEEVENTF_MOVE, 1, 1, 0, 0);
+        System.Threading.Thread.Sleep(10);
+        mouse_event(MOUSEEVENTF_MOVE, -1, -1, 0, 0);
+
+        // Method 2: Send ESC key
+        keybd_event(VK_ESCAPE, 0, 0, 0);
+        System.Threading.Thread.Sleep(10);
+        keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+
+        // Method 3: Try to find screensaver window and send message
+        IntPtr hWnd = FindWindow("WindowsScreenSaverClass", null);
+        if (hWnd != IntPtr.Zero) {
+            PostMessage(hWnd, WM_KEYDOWN, new IntPtr(VK_ESCAPE), IntPtr.Zero);
+            PostMessage(hWnd, WM_KEYUP, new IntPtr(VK_ESCAPE), IntPtr.Zero);
+        }
     }
 }
 "@
@@ -150,7 +187,17 @@ function Start-CustomScreenSaver {
 }
 
 function Stop-CustomScreenSaver {
-    # Find which screensaver is configured or use Mystify
+    Write-Log "Forcing screensaver exit..." -Level "INFO"
+
+    # Method 1: Use Windows API to force exit (simulate mouse/keyboard)
+    try {
+        [IdleHelper]::ForceExitScreenSaver()
+        Start-Sleep -Milliseconds 100
+    } catch {
+        Write-Log "Error using API method: $($_.Exception.Message)" -Level "WARNING"
+    }
+
+    # Method 2: Find and kill screensaver process
     $ss = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -ErrorAction SilentlyContinue).SCRNSAVE.EXE
     if ([string]::IsNullOrWhiteSpace($ss)) {
         $ss = "$env:WINDIR\System32\Mystify.scr"
@@ -158,14 +205,30 @@ function Stop-CustomScreenSaver {
 
     $procName = [System.IO.Path]::GetFileNameWithoutExtension($ss)
 
-    Write-Log "Stopping screensaver: $procName" -Level "INFO"
-
+    # Try to stop the screensaver process
     $stopped = Get-Process -Name $procName -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue -PassThru
     
-    if ($stopped) {
-        Write-Log "Screensaver stopped successfully" -Level "SUCCESS"
+    # Also try common screensaver process names
+    $commonScreensavers = @("scrnsave", "Mystify", "Bubbles", "Ribbons", "FlowerBox")
+    foreach ($commonName in $commonScreensavers) {
+        $proc = Get-Process -Name $commonName -ErrorAction SilentlyContinue
+        if ($proc) {
+            Stop-Process -Name $commonName -Force -ErrorAction SilentlyContinue
+            Write-Log "Stopped screensaver process: $commonName" -Level "INFO"
+        }
     }
+
+    # Method 3: Send ESC key using PowerShell
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.SendKeys]::SendWait("{ESC}")
+        Start-Sleep -Milliseconds 50
+    } catch {
+        # Ignore if SendKeys fails
+    }
+
+    Write-Log "Screensaver exit forced" -Level "SUCCESS"
 }
 
 # ===== PROCESS FUNCTIONS =====
